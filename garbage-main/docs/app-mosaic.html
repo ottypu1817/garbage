@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sort Wizard Mosaic</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@1.7.4/dist/tf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@0.8/dist/teachablemachine-image.min.js"></script>
+  <style>
+    :root {
+      --bg: #fff9f1;
+      --ink: #262114;
+      --muted: #6f664f;
+      --line: #dcc9a5;
+      --a: #f5d36e;
+      --b: #f3a46b;
+      --c: #7fc7ae;
+      --d: #78a9d3;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      font-family: "Verdana", "Geneva", sans-serif;
+      background:
+        linear-gradient(145deg, rgba(245, 211, 110, 0.34), transparent 28%),
+        linear-gradient(325deg, rgba(127, 199, 174, 0.28), transparent 32%),
+        var(--bg);
+      min-height: 100vh;
+    }
+    .page {
+      width: min(1080px, 100%);
+      margin: 0 auto;
+      padding: 24px;
+    }
+    .hero {
+      border: 2px solid var(--line);
+      background: rgba(255, 255, 255, 0.68);
+      border-radius: 24px;
+      padding: 20px;
+      box-shadow: 0 12px 24px rgba(37, 30, 16, 0.08);
+      animation: fadeUp 550ms ease both;
+    }
+    h1 {
+      margin: 0;
+      font-size: clamp(1.4rem, 5vw, 2.4rem);
+      letter-spacing: 0.01em;
+    }
+    .meta {
+      color: var(--muted);
+      margin-top: 8px;
+      line-height: 1.55;
+    }
+    .layout {
+      margin-top: 16px;
+      display: grid;
+      gap: 14px;
+      grid-template-columns: 1fr 1fr;
+    }
+    .tile {
+      border-radius: 18px;
+      border: 2px solid var(--line);
+      background: rgba(255, 255, 255, 0.82);
+      padding: 16px;
+    }
+    .tile-a { background: linear-gradient(180deg, rgba(245, 211, 110, 0.24), rgba(255, 255, 255, 0.92)); }
+    .tile-b { background: linear-gradient(180deg, rgba(127, 199, 174, 0.25), rgba(255, 255, 255, 0.92)); }
+    .tile-c { background: linear-gradient(180deg, rgba(120, 169, 211, 0.22), rgba(255, 255, 255, 0.92)); }
+    .full { grid-column: 1 / -1; }
+
+    input[type="file"] {
+      width: 100%;
+      border: 2px dashed var(--line);
+      border-radius: 12px;
+      padding: 12px;
+      background: #fff;
+      cursor: pointer;
+    }
+    .preview {
+      margin-top: 10px;
+      min-height: 200px;
+      border-radius: 12px;
+      border: 2px dashed var(--line);
+      display: grid;
+      place-items: center;
+      overflow: hidden;
+      background: #fff;
+    }
+    .preview img {
+      width: 100%;
+      max-height: 340px;
+      object-fit: contain;
+    }
+    .ranks {
+      display: grid;
+      gap: 10px;
+      margin-top: 10px;
+    }
+    .rank {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: #fff;
+      padding: 8px 10px;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 8px;
+      align-items: center;
+    }
+    .chip {
+      display: inline-block;
+      border-radius: 999px;
+      padding: 3px 10px;
+      font-size: 0.76rem;
+      font-weight: 700;
+      color: #1f1609;
+      background: #f7e6bf;
+      margin-bottom: 6px;
+    }
+    .best {
+      font-size: 1.1rem;
+      line-height: 1.6;
+    }
+    a { color: #6e4f13; }
+    @media (max-width: 840px) {
+      .layout { grid-template-columns: 1fr; }
+    }
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(14px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <section class="hero">
+      <h1>Sort Wizard Mosaic</h1>
+      <p class="meta">A visual-first smart classifier. Upload one photo and inspect ranked confidence cards.</p>
+      <a href="index.html">Back to launcher</a>
+    </section>
+
+    <section class="layout">
+      <article class="tile tile-a">
+        <span class="chip">Step 1</span>
+        <strong>Select an image</strong>
+        <input id="imageInput" type="file" accept="image/*" />
+        <div class="preview" id="preview">Waiting for photo...</div>
+      </article>
+
+      <article class="tile tile-b">
+        <span class="chip">Step 2</span>
+        <strong>Ranked confidence</strong>
+        <div class="ranks" id="ranks"></div>
+      </article>
+
+      <article class="tile tile-c full">
+        <span class="chip">Final Pick</span>
+        <div class="best" id="best">Loading model...</div>
+      </article>
+    </section>
+  </main>
+
+  <script>
+    const MODEL_URL = "./model/model.json";
+    const METADATA_URL = "./model/metadata.json";
+
+    const colorByLabel = {
+      glass: "#dff0ff",
+      battery: "#ffe0d4",
+      cardboard: "#f3edd7",
+      matal: "#d9f3e7"
+    };
+
+    const pretty = {
+      glass: "Glass",
+      battery: "Battery",
+      cardboard: "Cardboard",
+      matal: "Metal"
+    };
+
+    let model;
+    const imageInput = document.getElementById("imageInput");
+    const preview = document.getElementById("preview");
+    const ranks = document.getElementById("ranks");
+    const best = document.getElementById("best");
+
+    async function loadModel() {
+      try {
+        model = await tmImage.load(MODEL_URL, METADATA_URL);
+        best.textContent = "Model ready. Upload an image to begin.";
+      } catch (error) {
+        best.textContent = "Failed to load model: " + error.message;
+      }
+    }
+
+    function routeMessage(key) {
+      if (key === "battery") return "Route to hazardous collection.";
+      if (key === "glass") return "Route to glass recycling.";
+      if (key === "cardboard") return "Route to paper/cardboard recycling.";
+      if (key === "matal") return "Route to metal recycling.";
+      return "Manual inspection advised.";
+    }
+
+    function drawRanks(items) {
+      ranks.innerHTML = "";
+      items.forEach((item, index) => {
+        const card = document.createElement("div");
+        card.className = "rank";
+        card.style.background = colorByLabel[item.className] || "#fff";
+
+        const left = document.createElement("div");
+        left.textContent = (index + 1) + ". " + (pretty[item.className] || item.className);
+
+        const right = document.createElement("strong");
+        right.textContent = (item.probability * 100).toFixed(2) + "%";
+
+        card.appendChild(left);
+        card.appendChild(right);
+        ranks.appendChild(card);
+      });
+    }
+
+    async function classify(file) {
+      if (!model) return;
+
+      const img = new Image();
+      img.src = URL.createObjectURL(file);
+      img.onload = async () => {
+        preview.innerHTML = "";
+        preview.appendChild(img);
+
+        const result = await model.predict(img);
+        result.sort((a, b) => b.probability - a.probability);
+        drawRanks(result);
+
+        const top = result[0];
+        const label = pretty[top.className] || top.className;
+        best.innerHTML =
+          "Prediction: <strong>" +
+          label +
+          "</strong> with " +
+          (top.probability * 100).toFixed(2) +
+          "% confidence.<br>" +
+          routeMessage(top.className);
+      };
+    }
+
+    imageInput.addEventListener("change", (event) => {
+      const file = event.target.files[0];
+      if (!file) return;
+      classify(file);
+    });
+
+    loadModel();
+  </script>
+</body>
+</html>
