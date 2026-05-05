@@ -289,130 +289,140 @@
     const captureBtn = document.getElementById("captureBtn");
     let stream;
 
-    function switchMode(mode) {
-      if (mode === 'upload') {
-        uploadBtn.classList.add('active');
-        cameraBtn.classList.remove('active');
-        uploadSection.classList.add('active');
-        cameraSection.classList.remove('active');
-        if (stream) {
-          stream.getTracks().forEach(track => track.stop());
-          stream = null;
+    // Wait for the script to load
+    function init() {
+      if (typeof window.tmImage === 'undefined') {
+        setTimeout(init, 100);
+        return;
+      }
+      const tmImage = window.tmImage;
+
+      async function initModel() {
+        try {
+          best.textContent = "載入模型中...";
+          model = await tmImage.load(MODEL_URL, METADATA_URL);
+          best.textContent = "模型載入完成。請上傳圖片或使用鏡頭。";
+        } catch (error) {
+          best.textContent = "模型載入失敗: " + error.message;
         }
-        video.style.display = 'none';
-        preview.innerHTML = '<span class="hint">尚未選擇圖片。</span>';
-      } else if (mode === 'camera') {
-        cameraBtn.classList.add('active');
-        uploadBtn.classList.remove('active');
-        cameraSection.classList.add('active');
-        uploadSection.classList.remove('active');
-        startCamera();
       }
-    }
 
-    async function startCamera() {
-      try {
-        stream = await navigator.mediaDevices.getUserMedia({ video: true });
-        video.srcObject = stream;
-        video.style.display = 'block';
-        preview.innerHTML = '';
-        preview.appendChild(video);
-      } catch (error) {
-        best.textContent = "無法訪問相機: " + error.message;
+      function switchMode(mode) {
+        if (mode === 'upload') {
+          uploadBtn.classList.add('active');
+          cameraBtn.classList.remove('active');
+          uploadSection.classList.add('active');
+          cameraSection.classList.remove('active');
+          if (stream) {
+            stream.getTracks().forEach(track => track.stop());
+            stream = null;
+          }
+          video.style.display = 'none';
+          preview.innerHTML = '<span class="hint">尚未選擇圖片。</span>';
+        } else if (mode === 'camera') {
+          cameraBtn.classList.add('active');
+          uploadBtn.classList.remove('active');
+          cameraSection.classList.add('active');
+          uploadSection.classList.remove('active');
+          startCamera();
+        }
       }
-    }
 
-    function captureImage() {
-      const canvas = document.createElement('canvas');
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      const ctx = canvas.getContext('2d');
-      ctx.drawImage(video, 0, 0);
-      canvas.toBlob((blob) => {
-        const file = new File([blob], 'captured.jpg', { type: 'image/jpeg' });
+      async function startCamera() {
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({ video: true });
+          video.srcObject = stream;
+          video.style.display = 'block';
+          preview.innerHTML = '';
+          preview.appendChild(video);
+        } catch (error) {
+          best.textContent = "無法訪問相機: " + error.message;
+        }
+      }
+
+      function captureImage() {
+        const canvas = document.createElement('canvas');
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(video, 0, 0);
+        canvas.toBlob((blob) => {
+          const file = new File([blob], 'captured.jpg', { type: 'image/jpeg' });
+          classifyImage(file);
+        }, 'image/jpeg');
+      }
+
+      async function classifyImage(file) {
+        if (!model) return;
+
+        const img = new Image();
+        img.src = URL.createObjectURL(file);
+        img.onload = async () => {
+          preview.innerHTML = "";
+          preview.appendChild(img);
+
+          const prediction = await model.predict(img);
+          prediction.sort((a, b) => b.probability - a.probability);
+          renderRows(prediction);
+
+          const top = prediction[0];
+          const name = labelAlias[top.className] || top.className;
+          best.innerHTML =
+            "最佳類別: <strong>" +
+            name +
+            "</strong> (" +
+            (top.probability * 100).toFixed(2) +
+            "%)<br>" +
+            recommendation(name);
+        };
+      }
+
+      function recommendation(name) {
+        if (name === "電池") return "建議放入有害廢棄物流。";
+        if (name === "玻璃") return "放入玻璃回收箱。";
+        if (name === "紙板") return "壓平後放入紙板回收。";
+        if (name === "金屬") return "放入金屬回收流。";
+        return "無路由建議。";
+      }
+
+      function renderRows(predictions) {
+        results.innerHTML = "";
+        predictions.forEach((item) => {
+          const row = document.createElement("div");
+          row.className = "row";
+
+          const label = document.createElement("span");
+          label.textContent = labelAlias[item.className] || item.className;
+
+          const bar = document.createElement("span");
+          bar.className = "bar";
+          const fill = document.createElement("i");
+          fill.style.width = (item.probability * 100).toFixed(2) + "%";
+          bar.appendChild(fill);
+
+          const score = document.createElement("span");
+          score.textContent = (item.probability * 100).toFixed(1) + "%";
+
+          row.appendChild(label);
+          row.appendChild(bar);
+          row.appendChild(score);
+          results.appendChild(row);
+        });
+      }
+
+      imageInput.addEventListener("change", (event) => {
+        const file = event.target.files[0];
+        if (!file) return;
         classifyImage(file);
-      }, 'image/jpeg');
-    }
-
-    async function initModel() {
-      try {
-        best.textContent = "載入模型中...";
-        model = await tmImage.load(MODEL_URL, METADATA_URL);
-        best.textContent = "模型載入完成。請上傳圖片或使用鏡頭。";
-      } catch (error) {
-        best.textContent = "模型載入失敗: " + error.message;
-      }
-    }
-
-    function recommendation(name) {
-      if (name === "電池") return "建議放入有害廢棄物流。";
-      if (name === "玻璃") return "放入玻璃回收箱。";
-      if (name === "紙板") return "壓平後放入紙板回收。";
-      if (name === "金屬") return "放入金屬回收流。";
-      return "無路由建議。";
-    }
-
-    function renderRows(predictions) {
-      results.innerHTML = "";
-      predictions.forEach((item) => {
-        const row = document.createElement("div");
-        row.className = "row";
-
-        const label = document.createElement("span");
-        label.textContent = labelAlias[item.className] || item.className;
-
-        const bar = document.createElement("span");
-        bar.className = "bar";
-        const fill = document.createElement("i");
-        fill.style.width = (item.probability * 100).toFixed(2) + "%";
-        bar.appendChild(fill);
-
-        const score = document.createElement("span");
-        score.textContent = (item.probability * 100).toFixed(1) + "%";
-
-        row.appendChild(label);
-        row.appendChild(bar);
-        row.appendChild(score);
-        results.appendChild(row);
       });
+
+      uploadBtn.addEventListener('click', () => switchMode('upload'));
+      cameraBtn.addEventListener('click', () => switchMode('camera'));
+      captureBtn.addEventListener('click', captureImage);
+
+      initModel();
     }
 
-    async function classifyImage(file) {
-      if (!model) return;
-
-      const img = new Image();
-      img.src = URL.createObjectURL(file);
-      img.onload = async () => {
-        preview.innerHTML = "";
-        preview.appendChild(img);
-
-        const prediction = await model.predict(img);
-        prediction.sort((a, b) => b.probability - a.probability);
-        renderRows(prediction);
-
-        const top = prediction[0];
-        const name = labelAlias[top.className] || top.className;
-        best.innerHTML =
-          "最佳類別: <strong>" +
-          name +
-          "</strong> (" +
-          (top.probability * 100).toFixed(2) +
-          "%)<br>" +
-          recommendation(name);
-      };
-    }
-
-    imageInput.addEventListener("change", (event) => {
-      const file = event.target.files[0];
-      if (!file) return;
-      classifyImage(file);
-    });
-
-    uploadBtn.addEventListener('click', () => switchMode('upload'));
-    cameraBtn.addEventListener('click', () => switchMode('camera'));
-    captureBtn.addEventListener('click', captureImage);
-
-    initModel();
-  </script>
+    init();
 </body>
 </html>
