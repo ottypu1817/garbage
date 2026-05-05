@@ -142,8 +142,13 @@
       border: 1px solid rgba(0, 212, 255, 0.35);
       box-shadow: var(--glow);
     }
-    .capture-btn {
+    .action-buttons {
+      display: flex;
+      gap: 10px;
+      justify-content: center;
       margin-top: 10px;
+    }
+    .capture-btn {
       background: var(--accent);
       color: #000;
       border: none;
@@ -248,8 +253,10 @@
         <div class="input-section" id="cameraSection">
           <div class="camera-section">
             <video id="video" autoplay playsinline></video>
-            <br>
-            <button class="capture-btn" id="captureBtn">⚡ 捕捉圖片</button>
+            <div class="action-buttons">
+              <button class="capture-btn" id="captureBtn">⚡ 捕捉圖片</button>
+              <button class="mode-btn" id="switchCamBtn" style="padding: 10px 20px;">🔁 切換鏡頭</button>
+            </div>
           </div>
         </div>
         <div class="preview" id="preview">
@@ -269,11 +276,13 @@
     const MODEL_URL = "./model/model.json";
     const METADATA_URL = "./model/metadata.json";
 
+    // 補充了 metal (金屬) 拼寫檢查，保留 matal 以防模型標籤拼錯
     const labelAlias = {
       glass: "玻璃",
       battery: "電池",
       cardboard: "紙板",
-      matal: "金屬"
+      metal: "金屬",
+      matal: "金屬" 
     };
 
     let model;
@@ -287,17 +296,12 @@
     const cameraSection = document.getElementById("cameraSection");
     const video = document.getElementById("video");
     const captureBtn = document.getElementById("captureBtn");
-    // new control: switch camera
-    const switchCamBtn = document.createElement('button');
-    switchCamBtn.className = 'mode-btn';
-    switchCamBtn.id = 'switchCamBtn';
-    switchCamBtn.textContent = '🔁 切換鏡頭';
-    // insert after capture button in DOM when camera UI active
+    const switchCamBtn = document.getElementById("switchCamBtn");
+    
     let stream;
-    let facingMode = 'environment'; // default to rear camera
-    let pendingFile = null; // store file if classification requested before model ready
+    let facingMode = 'environment'; // 預設使用後鏡頭
+    let pendingFile = null;
 
-    // Wait for the script to load
     function init() {
       if (typeof window.tmImage === 'undefined') {
         setTimeout(init, 100);
@@ -310,7 +314,6 @@
           best.textContent = "載入模型中...";
           model = await tmImage.load(MODEL_URL, METADATA_URL);
           best.textContent = "模型載入完成。請上傳圖片或使用鏡頭。";
-          // If user uploaded image before model was ready, classify it now
           if (pendingFile) {
             classifyImage(pendingFile);
             pendingFile = null;
@@ -326,44 +329,44 @@
           cameraBtn.classList.remove('active');
           uploadSection.classList.add('active');
           cameraSection.classList.remove('active');
+          
           if (stream) {
             stream.getTracks().forEach(track => track.stop());
             stream = null;
           }
           video.style.display = 'none';
-          // Reset file input to allow re-selection
           imageInput.value = '';
           preview.innerHTML = '<span class="hint">尚未選擇圖片。</span>';
+          results.innerHTML = "";
+          best.textContent = "等待圖片輸入...";
         } else if (mode === 'camera') {
           cameraBtn.classList.add('active');
           uploadBtn.classList.remove('active');
           cameraSection.classList.add('active');
           uploadSection.classList.remove('active');
-          // ensure switch button is visible near capture button
-          const capParent = captureBtn.parentNode;
-          if (!document.getElementById('switchCamBtn')) {
-            capParent.insertBefore(switchCamBtn, captureBtn.nextSibling);
-          }
           startCamera();
         }
       }
 
       async function startCamera() {
+        // 切換前確保先關閉現有的串流
+        if (stream) {
+          stream.getTracks().forEach(track => track.stop());
+        }
+        
         try {
-          const constraints = { video: { facingMode: { ideal: facingMode } } };
+          const constraints = { video: { facingMode: facingMode } };
           stream = await navigator.mediaDevices.getUserMedia(constraints);
           video.srcObject = stream;
           video.style.display = 'block';
-          preview.innerHTML = '';
-          preview.appendChild(video);
+          preview.innerHTML = '<span class="hint">請點擊「捕捉圖片」開始辨識</span>';
         } catch (error) {
-          // fallback: try without facingMode
           try {
+            // Fallback: 如果無法指定鏡頭，直接請求任意相機
             stream = await navigator.mediaDevices.getUserMedia({ video: true });
             video.srcObject = stream;
             video.style.display = 'block';
-            preview.innerHTML = '';
-            preview.appendChild(video);
+            preview.innerHTML = '<span class="hint">請點擊「捕捉圖片」開始辨識</span>';
           } catch (err) {
             best.textContent = "無法訪問相機: " + err.message;
           }
@@ -371,6 +374,7 @@
       }
 
       function captureImage() {
+        if (!video.videoWidth) return;
         const canvas = document.createElement('canvas');
         canvas.width = video.videoWidth;
         canvas.height = video.videoHeight;
@@ -378,56 +382,43 @@
         ctx.drawImage(video, 0, 0);
         canvas.toBlob((blob) => {
           const file = new File([blob], 'captured.jpg', { type: 'image/jpeg' });
-          // show preview immediately
-          const img = new Image();
-          img.src = URL.createObjectURL(file);
-          img.onload = () => {
-            preview.innerHTML = '';
-            preview.appendChild(img);
-          };
           classifyImage(file);
         }, 'image/jpeg');
       }
 
       async function classifyImage(file) {
-        // Show preview immediately
         const img = new Image();
         img.src = URL.createObjectURL(file);
-        preview.innerHTML = '';  // Clear previous content immediately
         
-        img.onload = () => {
-          // Ensure preview is still empty and img is ready
-          if (!preview.querySelector('img')) {
-            preview.appendChild(img);
+        // 必須等待圖片「完全載入」才能清空預覽區並丟給模型
+        img.onload = async () => {
+          preview.innerHTML = ''; 
+          preview.appendChild(img);
+
+          if (!model) {
+            pendingFile = file;
+            best.textContent = '模型尚未載入，圖片已就緒，載入完成後會自動分類...';
+            return;
+          }
+
+          try {
+            // 模型需要載入完畢的 img 元素
+            const prediction = await model.predict(img);
+            prediction.sort((a, b) => b.probability - a.probability);
+            renderRows(prediction);
+
+            const top = prediction[0];
+            const name = labelAlias[top.className] || top.className;
+            best.innerHTML =
+              '最佳類別: <strong>' + name + '</strong> (' + (top.probability * 100).toFixed(2) + '%)<br>' + recommendation(name);
+          } catch (err) {
+            best.textContent = '分類失敗: ' + err.message;
           }
         };
-        
+
         img.onerror = () => {
           preview.innerHTML = '<span class="hint">圖片載入失敗。</span>';
         };
-        
-        // Add image to preview even before it fully loads
-        preview.appendChild(img);
-
-        if (!model) {
-          // Store pending file and inform user; model will auto-process when ready
-          pendingFile = file;
-          best.textContent = '模型尚未載入，圖片已就緒，載入完成後會自動分類...';
-          return;
-        }
-
-        try {
-          const prediction = await model.predict(img);
-          prediction.sort((a, b) => b.probability - a.probability);
-          renderRows(prediction);
-
-          const top = prediction[0];
-          const name = labelAlias[top.className] || top.className;
-          best.innerHTML =
-            '最佳類別: <strong>' + name + '</strong> (' + (top.probability * 100).toFixed(2) + '%)<br>' + recommendation(name);
-        } catch (err) {
-          best.textContent = '分類失敗: ' + err.message;
-        }
       }
 
       function recommendation(name) {
@@ -473,13 +464,8 @@
       cameraBtn.addEventListener('click', () => switchMode('camera'));
       captureBtn.addEventListener('click', captureImage);
       
-      // Handle switch camera button
       switchCamBtn.addEventListener('click', () => {
         facingMode = facingMode === 'environment' ? 'user' : 'environment';
-        if (stream) {
-          stream.getTracks().forEach(track => track.stop());
-          stream = null;
-        }
         startCamera();
       });
 
@@ -487,5 +473,6 @@
     }
 
     init();
+  </script>
 </body>
 </html>
