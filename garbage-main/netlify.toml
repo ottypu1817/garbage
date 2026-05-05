@@ -1,0 +1,32 @@
+# Netlify 部署配置
+
+[build]
+  # 不需要構建步驟，直接部署靜態文件
+  publish = "garbage-main"
+  command = "echo 'Static files deployment'"
+
+[[redirects]]
+  # 為 SPA 配置 404 重定向
+  from = "/*"
+  to = "index.html"
+  status = 200
+
+[dev]
+  # 本地開發服務器配置
+  port = 8000
+
+[context.production]
+  # 生產環境環境變量
+  environment = { NODE_ENV = "production" }
+
+[context.deploy-preview]
+  # 預覽環境環境變量
+  environment = { NODE_ENV = "preview" }
+
+# 構建時間限制（秒）
+[build.environment]
+  NODE_VERSION = "18.0.0"
+
+# 緩存設置
+[[cache]]
+  paths = ["/node_modules/**"]
