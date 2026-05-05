@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-tw">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>EcoScan Console</title>
+  <title>生態掃描控制台</title>
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@1.7.4/dist/tf.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@0.8/dist/teachablemachine-image.min.js"></script>
   <style>
@@ -15,13 +15,15 @@
       --muted: #9dc8b3;
       --accent: #6dd3a8;
       --warn: #e7b85d;
+      --success: #4CAF50;
+      --error: #f44336;
     }
     * { box-sizing: border-box; }
     body {
       margin: 0;
       min-height: 100vh;
       color: var(--ink);
-      font-family: "Lucida Console", "Courier New", monospace;
+      font-family: "Microsoft YaHei", "PingFang SC", "Hiragino Sans GB", sans-serif;
       background:
         linear-gradient(135deg, rgba(109, 211, 168, 0.08), transparent 30%),
         radial-gradient(circle at 85% 15%, rgba(231, 184, 93, 0.12), transparent 25%),
@@ -57,6 +59,12 @@
       border-radius: 14px;
       padding: 16px;
     }
+    .input-section {
+      display: none;
+    }
+    .input-section.active {
+      display: block;
+    }
     input[type="file"] {
       width: 100%;
       background: var(--panel-soft);
@@ -65,6 +73,25 @@
       border-radius: 10px;
       padding: 10px;
       cursor: pointer;
+    }
+    .camera-section {
+      text-align: center;
+    }
+    video {
+      width: 100%;
+      max-width: 400px;
+      border-radius: 12px;
+      border: 1px solid rgba(109, 211, 168, 0.35);
+    }
+    .capture-btn {
+      margin-top: 10px;
+      background: var(--accent);
+      color: var(--bg);
+      border: none;
+      border-radius: 8px;
+      padding: 10px 20px;
+      cursor: pointer;
+      font-size: 1rem;
     }
     .preview {
       margin-top: 14px;
@@ -76,7 +103,7 @@
       place-items: center;
       background: #0f2226;
     }
-    .preview img {
+    .preview img, .preview video {
       max-width: 100%;
       max-height: 360px;
       object-fit: contain;
@@ -129,24 +156,37 @@
 <body>
   <main class="shell">
     <section class="top">
-      <h1>EcoScan Console</h1>
-      <div class="hint">Upload one waste-material image and get smart classification scores.</div>
-      <div class="sub"><a href="index.html">Back to launcher</a></div>
+      <h1>生態掃描控制台</h1>
+      <div class="hint">上傳垃圾圖片或使用鏡頭辨識，獲取智能分類結果。</div>
+      <div class="mode-selector">
+        <button class="mode-btn active" id="uploadBtn">照片上傳</button>
+        <button class="mode-btn" id="cameraBtn">鏡頭辨識</button>
+      </div>
+      <div class="sub"><a href="index.html">返回主頁</a></div>
     </section>
 
     <section class="grid">
       <article class="box">
-        <label for="imageInput">Image Source</label>
-        <input id="imageInput" type="file" accept="image/*" />
+        <div class="input-section active" id="uploadSection">
+          <label for="imageInput">選擇圖片</label>
+          <input id="imageInput" type="file" accept="image/*" />
+        </div>
+        <div class="input-section" id="cameraSection">
+          <div class="camera-section">
+            <video id="video" autoplay playsinline></video>
+            <br>
+            <button class="capture-btn" id="captureBtn">捕捉圖片</button>
+          </div>
+        </div>
         <div class="preview" id="preview">
-          <span class="hint">No image selected.</span>
+          <span class="hint">尚未選擇圖片。</span>
         </div>
       </article>
 
       <article class="box">
-        <strong>Classification Panel</strong>
+        <strong>分類面板</strong>
         <div class="stat" id="results"></div>
-        <div class="best" id="best">Waiting for model and image input...</div>
+        <div class="best" id="best">等待模型和圖片輸入...</div>
       </article>
     </section>
   </main>
@@ -156,10 +196,10 @@
     const METADATA_URL = "./model/metadata.json";
 
     const labelAlias = {
-      glass: "Glass",
-      battery: "Battery",
-      cardboard: "Cardboard",
-      matal: "Metal"
+      glass: "玻璃",
+      battery: "電池",
+      cardboard: "紙板",
+      matal: "金屬"
     };
 
     let model;
@@ -167,23 +207,75 @@
     const preview = document.getElementById("preview");
     const results = document.getElementById("results");
     const best = document.getElementById("best");
+    const uploadBtn = document.getElementById("uploadBtn");
+    const cameraBtn = document.getElementById("cameraBtn");
+    const uploadSection = document.getElementById("uploadSection");
+    const cameraSection = document.getElementById("cameraSection");
+    const video = document.getElementById("video");
+    const captureBtn = document.getElementById("captureBtn");
+    let stream;
+
+    function switchMode(mode) {
+      if (mode === 'upload') {
+        uploadBtn.classList.add('active');
+        cameraBtn.classList.remove('active');
+        uploadSection.classList.add('active');
+        cameraSection.classList.remove('active');
+        if (stream) {
+          stream.getTracks().forEach(track => track.stop());
+          stream = null;
+        }
+        video.style.display = 'none';
+        preview.innerHTML = '<span class="hint">尚未選擇圖片。</span>';
+      } else if (mode === 'camera') {
+        cameraBtn.classList.add('active');
+        uploadBtn.classList.remove('active');
+        cameraSection.classList.add('active');
+        uploadSection.classList.remove('active');
+        startCamera();
+      }
+    }
+
+    async function startCamera() {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        video.srcObject = stream;
+        video.style.display = 'block';
+        preview.innerHTML = '';
+        preview.appendChild(video);
+      } catch (error) {
+        best.textContent = "無法訪問相機: " + error.message;
+      }
+    }
+
+    function captureImage() {
+      const canvas = document.createElement('canvas');
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(video, 0, 0);
+      canvas.toBlob((blob) => {
+        const file = new File([blob], 'captured.jpg', { type: 'image/jpeg' });
+        classifyImage(file);
+      }, 'image/jpeg');
+    }
 
     async function initModel() {
       try {
-        best.textContent = "Loading model...";
+        best.textContent = "載入模型中...";
         model = await tmImage.load(MODEL_URL, METADATA_URL);
-        best.textContent = "Model loaded. Please upload an image.";
+        best.textContent = "模型載入完成。請上傳圖片或使用鏡頭。";
       } catch (error) {
-        best.textContent = "Model load failed: " + error.message;
+        best.textContent = "模型載入失敗: " + error.message;
       }
     }
 
     function recommendation(name) {
-      if (name === "Battery") return "Hazardous waste stream advised.";
-      if (name === "Glass") return "Place in glass recycling bin.";
-      if (name === "Cardboard") return "Flatten and place in paper/cardboard recycling.";
-      if (name === "Metal") return "Place in metal recycling stream.";
-      return "No routing suggestion available.";
+      if (name === "電池") return "建議放入有害廢棄物流。";
+      if (name === "玻璃") return "放入玻璃回收箱。";
+      if (name === "紙板") return "壓平後放入紙板回收。";
+      if (name === "金屬") return "放入金屬回收流。";
+      return "無路由建議。";
     }
 
     function renderRows(predictions) {
@@ -227,7 +319,7 @@
         const top = prediction[0];
         const name = labelAlias[top.className] || top.className;
         best.innerHTML =
-          "Top class: <strong>" +
+          "最佳類別: <strong>" +
           name +
           "</strong> (" +
           (top.probability * 100).toFixed(2) +
@@ -241,6 +333,10 @@
       if (!file) return;
       classifyImage(file);
     });
+
+    uploadBtn.addEventListener('click', () => switchMode('upload'));
+    cameraBtn.addEventListener('click', () => switchMode('camera'));
+    captureBtn.addEventListener('click', captureImage);
 
     initModel();
   </script>
